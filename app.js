@@ -161,6 +161,8 @@ function renderAdminDashboard() {
     <section class="admin-grid" aria-label="전체 학생 정보">
       ${STUDENTS.map(renderStudentCard).join("")}
     </section>
+
+    <div id="counselingPanelContainer" style="margin-top: 40px;"></div>
   `;
 
   showOnly(adminView);
@@ -176,6 +178,7 @@ function renderStudentCard(student) {
         <p class="student-number">학번 ${student.id}</p>
         ${renderGrades(student.grades, true, `gradesTitle-${student.id}`)}
         ${renderTraits(student)}
+        <button class="primary-button" style="width: 100%; margin-top: 15px;" onclick="openCounselingPanel('${student.id}')">상담 전략 요청</button>
       </div>
     </article>
   `;
@@ -211,5 +214,115 @@ function renderTraits(student) {
     </section>
   `;
 }
+
+// AI 학생 상담 전략 도우미 패널 렌더링 함수
+window.openCounselingPanel = function(studentId) {
+  const student = STUDENTS.find(s => s.id === studentId);
+  const aliasMap = { "10101": "학생 A", "10102": "학생 B", "10103": "학생 C" };
+  const studentAlias = aliasMap[studentId] || "익명 학생";
+  
+  const gradeSummary = Object.entries(student.grades).map(([k,v]) => `${k}: ${v}`).join(", ");
+  const learningTraits = student.traits.join(" ") + " " + student.teacherMemo;
+
+  const container = document.getElementById("counselingPanelContainer");
+  
+  // 패널 HTML 주입
+  container.innerHTML = `
+    <section class="intro-panel" style="margin-top: 20px; padding: 25px;">
+      <h2 style="font-size: 28px; text-decoration: none; color: #001eff; text-shadow: none;">AI 학생 상담 전략 도우미</h2>
+      <p style="margin-top: 5px; color: #333; font-weight: 600;">선택된 학생의 정보와 고민을 바탕으로 상담 전략을 제안합니다.</p>
+      
+      <div style="background: #fff; padding: 15px; border-radius: 8px; border: 2px solid #001eff; margin-top: 15px;">
+        <p style="margin: 0;"><strong>선택된 학생 (화면용):</strong> ${student.name} (${student.id})</p>
+        <hr style="margin: 10px 0; border: 0; border-top: 1px dashed #ccc;"/>
+        <p style="margin: 0 0 5px 0;"><strong>전송 데이터 미리보기 (익명화):</strong></p>
+        <pre id="previewData" style="background: #f4f4f4; padding: 10px; font-size: 13px; overflow-x: auto; margin: 0; border: 1px solid #ddd;"></pre>
+      </div>
+      
+      <div style="margin-top: 15px;">
+        <label for="teacherConcern" style="font-weight: 900; color: #001eff;">교사 고민 입력:</label>
+        <textarea id="teacherConcern" rows="3" style="width: 100%; padding: 10px; font-size: 14px; margin-top: 5px; border: 2px solid #aaa; border-radius: 4px;" placeholder="수업 참여는 좋은데 평가 결과가 낮습니다. 어떻게 상담하면 좋을까요?"></textarea>
+      </div>
+
+      <div style="margin-top: 15px;">
+        <button id="requestCounselingBtn" class="primary-button" style="width: 100%;">AI 상담 전략 받기</button>
+      </div>
+
+      <div id="counselingResult" style="margin-top: 20px; background: #eaffff; padding: 15px; border: 3px dashed #001eff; border-radius: 8px; display: none;"></div>
+      <div id="counselingError" style="margin-top: 10px; color: red; font-weight: bold; display: none;"></div>
+
+      <p style="font-size: 12px; color: #555; margin-top: 15px; font-weight: bold;">
+        * AI 상담 전략은 참고용입니다. 최종 판단과 실제 상담은 교사가 학생의 상황을 종합적으로 고려하여 진행해야 합니다.
+      </p>
+    </section>
+  `;
+
+  // 스크롤 이동
+  container.scrollIntoView({ behavior: 'smooth' });
+
+  const concernInput = document.getElementById("teacherConcern");
+  const previewData = document.getElementById("previewData");
+
+  // 미리보기 업데이트 함수
+  const updatePreview = () => {
+    previewData.textContent = JSON.stringify({
+      studentAlias,
+      gradeSummary,
+      learningTraits,
+      teacherConcern: concernInput.value.trim()
+    }, null, 2);
+  };
+
+  // 초기 미리보기 설정
+  updatePreview();
+
+  // 입력할 때마다 미리보기 업데이트
+  concernInput.addEventListener("input", updatePreview);
+
+  // AI 상담 전략 받기 버튼 클릭 이벤트
+  document.getElementById("requestCounselingBtn").addEventListener("click", async () => {
+    const concern = concernInput.value.trim();
+    const errorDiv = document.getElementById("counselingError");
+    const resultDiv = document.getElementById("counselingResult");
+
+    if (!concern) {
+      errorDiv.textContent = "상담 고민을 먼저 입력해주세요.";
+      errorDiv.style.display = "block";
+      resultDiv.style.display = "none";
+      return;
+    }
+
+    errorDiv.style.display = "none";
+    resultDiv.style.display = "block";
+    resultDiv.innerHTML = "<p style='margin: 0; font-weight: bold; color: #001eff;'>AI가 상담 전략을 생성하는 중입니다...</p>";
+
+    try {
+      const response = await fetch('/api/gemini-counseling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentAlias,
+          gradeSummary,
+          learningTraits,
+          teacherConcern: concern
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        // 응답 텍스트 줄바꿈 처리
+        const formattedResult = data.result.replace(/\\n/g, '<br/>');
+        resultDiv.innerHTML = `<h3 style="margin-top: 0; color: #ff00aa;">AI 상담 전략 결과</h3><div style="line-height: 1.6;">${formattedResult}</div>`;
+      } else {
+        throw new Error(data.error || "알 수 없는 오류가 발생했습니다.");
+      }
+    } catch (err) {
+      console.error(err);
+      resultDiv.style.display = "none";
+      errorDiv.textContent = "AI 상담 전략을 불러오지 못했습니다. API 키 또는 Vercel 환경 변수를 확인해주세요.";
+      errorDiv.style.display = "block";
+    }
+  });
+};
 
 showOnly(loginView);
